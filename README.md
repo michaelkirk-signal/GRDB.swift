@@ -7339,13 +7339,13 @@ Alternatively, perform a manual installation of GRDB and SQLCipher:
 4. Add the `GRDBCipher.framework` from the targetted platform to the **Embedded Binaries** section of the **General**  tab of your target.
 
 
-**You create and open an encrypted database** by providing a passphrase to your [database connection](#database-connections):
+**You create and open an encrypted database** by providing a CipherConfiguration to your [database connection](#database-connections):
 
 ```swift
 import GRDBCipher
 
 var configuration = Configuration()
-configuration.passphrase = "secret"
+configuration.cipherConfiguration = CipherConfiguration(passphrase: "secret")
 let dbQueue = try DatabaseQueue(path: "...", configuration: configuration)
 ```
 
@@ -7365,8 +7365,8 @@ let clearDBQueue = try DatabaseQueue(path: "/path/to/clear.db")
 
 // The encrypted database, at some distinct location:
 var configuration = Configuration()
-configuration.passphrase = "secret"
-let encryptedDBQueue = try DatabaseQueue(path: "/path/to/encrypted.db", configuration: config)
+configuration.cipherConfiguration = CipherConfiguration(passphrase: "secret")
+let encryptedDBQueue = try DatabaseQueue(path: "/path/to/encrypted.db", configuration: configuration)
 
 try clearDBQueue.inDatabase { db in
     try db.execute(sql: "ATTACH DATABASE ? AS encrypted KEY ?", arguments: [encryptedDBQueue.path, "secret"])
@@ -7377,19 +7377,53 @@ try clearDBQueue.inDatabase { db in
 // Now the copy is done, and the clear-text database can be deleted.
 ```
 
-## Advanced configuration options for SQLCipher
+## Advanced SQLCipher Parameters
 
-There are two advanced configuration options that you can set for configuring SQLCipher that control aspects of the encryption and key generation process.
+There are advanced optional SQLCipher configuration parameters that control
+aspects of the encryption and key generation process.
+
+### Backwards Compatible Cipher Parameters
+
+If you are using default cipher parameters and create a database on one version
+of SQLCipher, then upgrade to a new major version of SQLCipher, because the 
+default cipher parameters can change, you will not be able to re-open that
+existing database, unless you specify the same cipher parameters which were
+used to create that database.
+
+The easiest way is with the cipher_compatibility pragma introduced in SQLCipher
+4.0.1, usable from GRDB as `CipherParameters.compatibility`.
 
 ```swift
 var configuration = Configuration()
-configuration.passphrase = "secret"
-configuration.cipherPageSize = .pageSize4K
-configuration.kdfIterations = 128000
+var cipherConfiguration = CipherConfiguration(passphrase: "secret")
+
+# uses the cipher parameters which were default in SQLCipher v3
+cipherConfiguration.cipherParameters = .compatibility(version: 3)
+
 let dbQueue = try DatabaseQueue(path: "...", configuration: configuration)
 ```
 
-### cipherPageSize
+### Custom Cipher Parameters
+
+If you want more fine-grained control over what cipher parameters are used, you
+may use `CipherParameters.custom`.
+
+```swift
+var configuration = Configuration()
+var cipherConfiguration = CipherConfiguration(passphrase: "secret")
+
+cipherConfiguration.cipherParameters = .custom(pageSize: .pageSize4K, kdfIterations: 128000)
+
+# or specify nil to use the default page size
+cipherConfiguration.cipherParameters = .custom(pageSize: nil, kdfIterations: 128000)
+
+# or specify nil to use the default kdfIterations
+cipherConfiguration.cipherParameters = .custom(pageSize: .pageSize4K, kdfIterations: nil)
+
+let dbQueue = try DatabaseQueue(path: "...", configuration: configuration)
+```
+
+**cipherPageSize**
 
 The `cipherPageSize` is used to adjust the page size for the encrypted database (this corresponds to the [SQLCipher `PRAGMA cipher_page_size`](https://www.zetetic.net/sqlcipher/sqlcipher-api/#cipher_page_size) configuration option). Increasing the page size can noticeably improve performance for certain queries that access large numbers of pages. 
 
@@ -7397,14 +7431,13 @@ The default `cipherPageSize` in the current version of SQLCipher used in GRDB.sw
 
 > :point_up: **Note**: the same `cipherPageSize` must be supplied every time that the database file is open; attempting to access the database without setting the proper `cipherPageSize` will result in the `SQLite error 26: file is encrypted or is not a database` error being thrown. 
 
-### kdfIterations
+**kdfIterations**
 
 The `kdfIterations` value is used to adjust the number of iterations that the PBKDF2 key derivation is run to derive the key from the `passphrase` supplied (this corresponds to the [SQLCipher `PRAGMA kdf_iter`](https://www.zetetic.net/sqlcipher/sqlcipher-api/#kdf_iter) configuration option).
 
 The default `kdfIterations` in the current version of SQLCipher used in GRDB.swift is `64000`. It is not recommend to reduce the number of iterations used from the default.
 
 > :point_up: **Note**: the same `kdfIterations` must be supplied every time that the database file is open; attempting to access the database without setting the proper `kdfIterations` will result in the `SQLite error 26: file is encrypted or is not a database` error being thrown. 
-
 
 ## Backup
 
