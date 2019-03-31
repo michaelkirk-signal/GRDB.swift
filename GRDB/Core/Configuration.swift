@@ -77,24 +77,22 @@ public struct Configuration {
     // MARK: - Encryption
     
     #if SQLITE_HAS_CODEC
-    /// The passphrase for the encrypted database.
-    ///
-    /// Default: nil
-    public var passphrase: String?
-    
-    /// The cipher_page_size setting for the encrypted database.
-    ///
-    /// See https://www.zetetic.net/sqlcipher/sqlcipher-api/#cipher_page_size
-    ///
-    /// Default: 1024 - this corresponds to the default used by SQLCipher 3
-    public var cipherPageSize: Int = 1024
-    
-    /// The kdf_iter setting for the encrypted database.
-    ///
-    /// See https://www.zetetic.net/sqlcipher/sqlcipher-api/#kdf_iter
-    ///
-    /// Default: 64000 - this corresponds to the default used by SQLCipher 3
-    public var kdfIterations: Int = 64000
+
+    mutating func change(passphrase newPassphrase: String) {
+        if var existingCipherConfiguration = cipherConfiguration {
+            existingCipherConfiguration.passphrase = newPassphrase
+            cipherConfiguration = existingCipherConfiguration
+        } else {
+            cipherConfiguration = CipherConfiguration(passphrase: newPassphrase)
+        }
+    }
+
+    // To enable database encryption provide a CipherConfiguration
+    //
+    //     var config = Configuration()
+    //     config.cipherConfiguration = CipherConfiguration(passphrase: "secret")
+    public var cipherConfiguration: CipherConfiguration? = nil
+
     #endif
     
     
@@ -198,3 +196,53 @@ public struct Configuration {
 
 /// A tracing function that takes an SQL string.
 public typealias TraceFunction = (String) -> Void
+
+#if SQLITE_HAS_CODEC
+
+public struct CipherConfiguration {
+
+    /// The passphrase for the encrypted database.
+    public var passphrase: String
+
+    public enum Parameters {
+        /// Use the default cipher parameters for whichever version of SQLCipher is
+        /// currently installed
+        case defaultParameters
+
+        /// Use cipher parameters corresponding to the defaults of the specified major
+        /// version.
+        ///
+        /// - parameters:
+        ///     - version: The cipher_compatibility for the encrypted database.
+        ///
+        ///     See https://www.zetetic.net/sqlcipher/sqlcipher-api/#cipher_compatibility
+        ///
+        ///     Setting to 1, 2, or 3 wil; cause SQLCipher to operate with default settings
+        ///     consistent with that major version number for the current connection.
+        ///
+        /// Note: Available with SQLCipher 4.0.1 or later
+        case compatibility(version: UInt)
+
+        /// Use explicit non-default cipher parameters
+        ///
+        /// - parameters:
+        ///     - cipherPageSize: The cipher_page_size setting for the encrypted database.
+        ///     See https://www.zetetic.net/sqlcipher/sqlcipher-api/#cipher_page_size
+        ///
+        ///     If nil, the default for the installed version of SQLCipher will be used.
+        ///
+        ///     - kdfIteration: The kdf_iter setting for the encrypted database.
+        ///     See https://www.zetetic.net/sqlcipher/sqlcipher-api/#kdf_iter
+        ///
+        ///     If nil, the default for the installed version of SQLCipher will be used.
+        case custom(cipherPageSize: Int?, kdfIteration: Int?)
+    }
+
+    public var parameters: Parameters = .defaultParameters
+
+    public init(passphrase: String) {
+        self.passphrase = passphrase
+    }
+}
+
+#endif

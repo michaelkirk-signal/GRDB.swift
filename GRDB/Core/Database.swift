@@ -171,10 +171,22 @@ public final class Database {
             try Database.activateExtendedCodes(sqliteConnection)
             #if SQLITE_HAS_CODEC
                 try Database.validateSQLCipher(sqliteConnection)
-                if let passphrase = configuration.passphrase {
-                    try Database.set(passphrase: passphrase, forConnection: sqliteConnection)
-                    try Database.set(cipherPageSize: configuration.cipherPageSize, forConnection: sqliteConnection)
-                    try Database.set(kdfIterations: configuration.kdfIterations, forConnection: sqliteConnection)
+                if let cipherConfiguration = configuration.cipherConfiguration {
+                    try Database.set(passphrase: cipherConfiguration.passphrase, forConnection: sqliteConnection)
+
+                    switch cipherConfiguration.parameters {
+                    case .custom(cipherPageSize: let cipherPageSize, kdfIteration: let kdfIteration):
+                        if let cipherPageSize = cipherPageSize {
+                            try Database.set(cipherPageSize: cipherPageSize, forConnection: sqliteConnection)
+                        }
+                        if let kdfIteration = kdfIteration {
+                            try Database.set(kdfIterations: kdfIteration, forConnection: sqliteConnection)
+                        }
+                    case .compatibility(version: let version):
+                        try Database.set(cipherCompatibilityVersion: version, forConnection: sqliteConnection)
+                    case .defaultParameters:
+                        break
+                    }
                 }
             #endif
             try Database.validateDatabaseFormat(sqliteConnection)
@@ -288,6 +300,27 @@ extension Database {
     private static func set(kdfIterations: Int, forConnection sqliteConnection: SQLiteConnection) throws {
         var sqliteStatement: SQLiteStatement? = nil
         var code = sqlite3_prepare_v2(sqliteConnection, "PRAGMA kdf_iter = \(kdfIterations)", -1, &sqliteStatement, nil)
+        guard code == SQLITE_OK else {
+            throw DatabaseError(resultCode: code, message: String(cString: sqlite3_errmsg(sqliteConnection)))
+        }
+        defer {
+            sqlite3_finalize(sqliteStatement)
+        }
+        code = sqlite3_step(sqliteStatement)
+        if code != SQLITE_DONE {
+            throw DatabaseError(resultCode: code, message: String(cString: sqlite3_errmsg(sqliteConnection)))
+        }
+    }
+
+    private static func set(cipherCompatibilityVersion: UInt, forConnection sqliteConnection: SQLiteConnection) throws {
+        // `PRAGMA cipher_compatibility` is not available until SQLCipher 4.0.1 which corresponds
+        // to this version of sqlite.
+        // https://www.zetetic.net/blog/2018/12/18/sqlcipher-401-release/
+        let sqlCipherVersionSupportingCipherCompatibility = 3026000;
+        assert(SQLITE_VERSION_NUMBER >= sqlCipherVersionSupportingCipherCompatibility)
+
+        var sqliteStatement: SQLiteStatement? = nil
+        var code = sqlite3_prepare_v2(sqliteConnection, "PRAGMA cipher_compatibility = \(cipherCompatibilityVersion)", -1, &sqliteStatement, nil)
         guard code == SQLITE_OK else {
             throw DatabaseError(resultCode: code, message: String(cString: sqlite3_errmsg(sqliteConnection)))
         }

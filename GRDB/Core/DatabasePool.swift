@@ -224,7 +224,7 @@ extension DatabasePool {
         public func change(passphrase: String) throws {
             try readerPool.clear(andThen: {
                 try writer.sync { try $0.change(passphrase: passphrase) }
-                readerConfig.passphrase = passphrase
+                readerConfig.change(passphrase: passphrase)
             })
         }
     }
