@@ -187,6 +187,23 @@ public final class Database {
                     case .defaultParameters:
                         break
                     }
+
+                    if let unencryptedHeaderConfiguration = cipherConfiguration.unencryptedHeaderConfiguration {
+                        try Database.set(unencryptedHeaderLength: unencryptedHeaderConfiguration.unencryptedLength,
+                                         forConnection: sqliteConnection)
+
+                        switch unencryptedHeaderConfiguration.saltSource {
+                        case .block(let saltBlock):
+                            try Database.set(cipherSalt: saltBlock(), forConnection: sqliteConnection)
+                        case .rawKeyDataWithExplicitSalt:
+                            // Do nothing - SQLCipher will automatically extract salt from a well
+                            // formed "Raw Key Data with Explicit Salt" formatted keyspec.
+                            // 
+                            // See `UnencryptedHeaderConfiguration` for details.
+                            assert(cipherConfiguration.passphrase.lengthOfBytes(using: .utf8) == 99)
+                            break
+                        }
+                    }
                 }
             #endif
             try Database.validateDatabaseFormat(sqliteConnection)
@@ -321,6 +338,47 @@ extension Database {
 
         var sqliteStatement: SQLiteStatement? = nil
         var code = sqlite3_prepare_v2(sqliteConnection, "PRAGMA cipher_compatibility = \(cipherCompatibilityVersion)", -1, &sqliteStatement, nil)
+        guard code == SQLITE_OK else {
+            throw DatabaseError(resultCode: code, message: String(cString: sqlite3_errmsg(sqliteConnection)))
+        }
+        defer {
+            sqlite3_finalize(sqliteStatement)
+        }
+        code = sqlite3_step(sqliteStatement)
+        if code != SQLITE_DONE {
+            throw DatabaseError(resultCode: code, message: String(cString: sqlite3_errmsg(sqliteConnection)))
+        }
+    }
+
+    private static func set(unencryptedHeaderLength: UInt, forConnection sqliteConnection: SQLiteConnection) throws {
+        // `PRAGMA cipher_plaintext_header_size` is not available until SQLCipher 4.0.1 which corresponds
+        // to this version of sqlite.        
+        let sqlCipherVersionSupportingUnencryptedHeaderLength = 3026000;
+        assert(SQLITE_VERSION_NUMBER >= sqlCipherVersionSupportingUnencryptedHeaderLength)
+
+        var sqliteStatement: SQLiteStatement? = nil
+        var code = sqlite3_prepare_v2(sqliteConnection, "PRAGMA cipher_plaintext_header_size = \(unencryptedHeaderLength)", -1, &sqliteStatement, nil)
+        guard code == SQLITE_OK else {
+            throw DatabaseError(resultCode: code, message: String(cString: sqlite3_errmsg(sqliteConnection)))
+        }
+        defer {
+            sqlite3_finalize(sqliteStatement)
+        }
+        code = sqlite3_step(sqliteStatement)
+        if code != SQLITE_DONE {
+            throw DatabaseError(resultCode: code, message: String(cString: sqlite3_errmsg(sqliteConnection)))
+        }
+    }
+
+    private static func set(cipherSalt: Data, forConnection sqliteConnection: SQLiteConnection) throws {
+        guard let saltString = String(data: cipherSalt, encoding: .utf8) else {
+            throw DatabaseError(resultCode: .SQLITE_MISUSE, message: """
+                The specified salt was not a valid utf8 string.
+                """)
+        }
+
+        var sqliteStatement: SQLiteStatement? = nil
+        var code = sqlite3_prepare_v2(sqliteConnection, "PRAGMA cipher_salt = \(saltString)", -1, &sqliteStatement, nil)
         guard code == SQLITE_OK else {
             throw DatabaseError(resultCode: code, message: String(cString: sqlite3_errmsg(sqliteConnection)))
         }

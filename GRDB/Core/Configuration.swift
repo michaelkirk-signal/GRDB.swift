@@ -240,6 +240,61 @@ public struct CipherConfiguration {
 
     public var parameters: Parameters = .defaultParameters
 
+    public struct UnencryptedHeaderConfiguration {
+
+        /// The cipher_plaintext_header_size for the encrypted database.
+        ///
+        /// from https://www.zetetic.net/sqlcipher/sqlcipher-api/#cipher_plaintext_header_size
+        ///    > the recommended offset is currently 32
+        public var unencryptedLength: UInt = 32
+
+        /// When using unencrypted headers, you must specify how to get the salt to SQLCipher
+        /// using a SaltSource.
+        ///
+        /// By default, SQLCipher looks for the database salt in the first bytes of the on-disk
+        /// database file. However, when using "unencrypted headers", the first portion of the
+        /// database file must be well known SQLite text instead of the salt.
+        public enum SaltSource {
+            /// Pass in a block which provides the salt
+            case block(() -> (Data))
+
+            /// If your CipherConfiguration.passphrase is in "Raw Key Data with Explicit Salt"
+            /// format, then use this SaltSource. SQLCipher will automatically extract the salt
+            /// from that CipherConfiguration.passphrase.
+            ///
+            /// See here for details on how you would format such a passphrase:
+            ///    https://www.zetetic.net/sqlcipher/sqlcipher-api/#key
+            case rawKeyDataWithExplicitSalt
+        }
+        public var saltSource: SaltSource
+
+        public init(saltSource: SaltSource) {
+            self.saltSource = saltSource
+        }
+    }
+
+    /// Set `unencryptedHeaderConfiguration` if you have a SQLCipher database in a shared app
+    /// container to avoid 0x10deadcc crashes.
+    ///
+    /// As a rule, when an app or extension is suspended, if that process holds a lock on a file in
+    /// a shared container, iOS will kill that process with the exception code: 0x10deadcc.
+    ///
+    /// Because SQLite's ubiquitous WAL mode requires file locking to facilitate concurrency, iOS
+    /// provides a special exemption to this rule for SQLite files. However, because SQLCipher
+    /// databases are encrypted, iOS cannot recognize them as database files. The exemption does
+    /// not apply, and iOS kills the process.
+    ///
+    /// The work around is to leave the first bytes of the SQLCipher database unencrypted.
+    /// This allows iOS to recognize that the locked file is a SQLite database and avoids the
+    /// crash.
+    ///
+    /// The data in the first bytes of the database file are boilerplate like "SQLite Format 3\0",
+    /// not sensitive user data.
+    ///
+    /// See more in `UnencryptedHeaderConfiguration` and at:
+    /// https://www.zetetic.net/sqlcipher/sqlcipher-api/#cipher_plaintext_header_size
+    public var unencryptedHeaderConfiguration: UnencryptedHeaderConfiguration?
+
     public init(passphrase: String) {
         self.passphrase = passphrase
     }
